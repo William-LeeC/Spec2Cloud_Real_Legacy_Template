@@ -1,0 +1,57 @@
+# FiveM server configuration - Increment 1 (economic-foundation)
+# Copy to server.cfg in the txAdmin data folder on the deployed VM and
+# fill in every {placeholder}. See specs/tech-stack.md for full rationale
+# and specs/contracts/infra/resources.yaml for the matching NSG rules.
+# Do not commit a real server.cfg with real credentials/keys/identifiers.
+
+sv_hostname "Custom RP Server"
+sv_maxclients 32
+
+# Networking - port 30120 must be reachable on both TCP and UDP (NSG rule
+# allow-fivem-game-traffic). Port 40120 (txAdmin) is intentionally NOT
+# configured here - it must stay restricted to admin IP(s) only, never
+# opened to the public internet (NSG rule allow-txadmin-admin-only).
+endpoint_add_tcp "0.0.0.0:30120"
+endpoint_add_udp "0.0.0.0:30120"
+
+# Database (oxmysql) - inject via environment/secret on the VM.
+set mysql_connection_string "mysql://{db-user}:{db-password}@localhost/{db-name}?charset=utf8mb4"
+
+# Cfx.re server key - obtain from https://keymaster.fivem.net
+# (see specs/prd.md Prerequisites - not yet obtained as of this writing)
+sv_licenseKey "{cfx-server-key}"
+
+# ── Default Cfx.re resources. Without these, a connecting player loads
+# their character/currency correctly but never actually spawns into the
+# world - mapmanager/spawnmanager/basic-gamemode own that.
+#
+# mapmanager, spawnmanager, basic-gamemode: cfx-server-data is archived
+# (its content is being folded into FXServer itself) but these three
+# still live there - clone https://github.com/citizenfx/cfx-server-data
+# and copy resources/[managers]/{mapmanager,spawnmanager} and
+# resources/[gamemodes]/basic-gamemode into your resources folder.
+#
+# chat, monitor: bundled INSIDE the FXServer artifact itself as built-in
+# "citizen system resources" - no download needed, `ensure` resolves them
+# automatically. (sessionmanager/hardcap/rconlog no longer exist as
+# separate resources - do not try to ensure them.) ──
+ensure mapmanager
+ensure spawnmanager
+ensure basic-gamemode
+ensure chat
+ensure monitor
+
+# ── Resource load order (must match specs/tech-stack.md) ──
+ensure oxmysql
+ensure ox_lib
+# ensure icarus            # add once the anti-cheat resource (adr-003) is installed on the VM
+ensure core-framework
+ensure currency-system
+ensure ox_target
+
+# ── ACE permissions for currency-system admin/test commands (FR7/FR8) ──
+# Replace with real admin identifiers before deploying. Never hardcode
+# identifiers inside the Lua resources themselves - grant access here.
+add_ace group.admin currency.admin allow
+add_ace group.admin currency.test allow
+add_principal identifier.license:{admin-license-identifier} group.admin

@@ -1,0 +1,109 @@
+version: "1.0"
+target: azure-vm
+# NOTE: This project's deployment target is an Azure VM (IaaS), not Azure
+# Container Apps. Fields like `ingress`/`scaling` from the default schema
+# don't apply to a VM; `networking` and `os`/`disks` are used instead.
+# See specs/adrs/adr-001-azure-vm-for-fivem-hosting.md for rationale.
+
+resources:
+  - name: fivem-server-vm
+    type: Microsoft.Compute/virtualMachines
+    description: >
+      Single VM hosting FXServer, txAdmin, and a co-located MariaDB instance
+      for Increment 1 (economic-foundation).
+    sku: Standard_B2s
+    justification: >
+      Burstable, low-cost tier appropriate for a first server with no
+      player base yet. Resize vertically (e.g. Standard_B4ms) as the player
+      count grows — see specs/tech-stack.md Infrastructure section.
+    os:
+      publisher: Canonical
+      offer: ubuntu-server
+      sku: "22_04-lts"
+      version: latest
+    networking:
+      publicIp: fivem-public-ip
+      nsg: fivem-nsg
+      vnet: fivem-vnet
+    dataDisks:
+      - name: fivem-data-disk
+    increment: economic-foundation
+
+  - name: fivem-data-disk
+    type: Microsoft.Compute/disks
+    description: >
+      Separate managed disk for MariaDB's data directory and FiveM resource
+      files, isolated from the OS disk.
+    sku: Standard_LRS
+    justification: "Standard HDD/SSD sufficient at Increment 1 scale; can move to Premium_LRS if I/O becomes a bottleneck."
+    increment: economic-foundation
+
+  - name: fivem-public-ip
+    type: Microsoft.Network/publicIPAddresses
+    description: Static public IP for player connections and (optionally) admin SSH/txAdmin access.
+    sku: Standard
+    allocationMethod: static
+    justification: "Static IP required — players and the Cfx.re server key need a stable address."
+    increment: economic-foundation
+
+  - name: fivem-vnet
+    type: Microsoft.Network/virtualNetworks
+    description: Network isolation boundary for the VM.
+    addressSpace: "10.0.0.0/24"
+    increment: economic-foundation
+
+  - name: fivem-nsg
+    type: Microsoft.Network/networkSecurityGroups
+    description: >
+      Firewall rules for the VM. Game traffic is public; admin surfaces
+      (txAdmin, SSH) are restricted to explicit admin IP(s) — see
+      specs/tech-stack.md's txAdmin section for why port 40120 must never
+      be opened to 0.0.0.0/0.
+    rules:
+      - name: allow-fivem-game-traffic
+        priority: 100
+        direction: Inbound
+        access: Allow
+        protocol: "*"          # both TCP and UDP required on 30120
+        sourceAddressPrefix: "*"
+        destinationPortRange: "30120"
+        description: "Public FiveM game traffic (TCP+UDP)"
+      - name: allow-txadmin-admin-only
+        priority: 110
+        direction: Inbound
+        access: Allow
+        protocol: Tcp
+        sourceAddressPrefix: "{admin-ip-list}"   # placeholder — fill in during implementation
+        destinationPortRange: "40120"
+        description: "txAdmin panel — restricted to admin IP(s) only, never public"
+      - name: allow-ssh-admin-only
+        priority: 120
+        direction: Inbound
+        access: Allow
+        protocol: Tcp
+        sourceAddressPrefix: "{admin-ip-list}"   # placeholder — fill in during implementation
+        destinationPortRange: "22"
+        description: "SSH — restricted to admin IP(s) only"
+      - name: deny-all-other-inbound
+        priority: 4096
+        direction: Inbound
+        access: Deny
+        protocol: "*"
+        sourceAddressPrefix: "*"
+        destinationPortRange: "*"
+        description: "Explicit default-deny for anything not listed above"
+    increment: economic-foundation
+
+dependencies:
+  - from: fivem-server-vm
+    to: fivem-nsg
+    reason: "VM's network interface is protected by this NSG"
+  - from: fivem-server-vm
+    to: fivem-data-disk
+    reason: "MariaDB data directory and FiveM resources live on the attached data disk"
+  - from: fivem-server-vm
+    to: fivem-public-ip
+    reason: "Players and the Cfx.re server key connect via this static public IP"
+  - from: fivem-server-vm
+    to: fivem-vnet
+    reason: "VM's network interface is attached to this VNet"
