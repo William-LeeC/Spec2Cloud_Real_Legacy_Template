@@ -1,0 +1,297 @@
+name: Package Spec2Cloud Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+        type: string
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Validate structure
+        run: |
+          echo "Validating spec2cloud structure..."
+          
+          # Check required directories
+          required_dirs=(".github/skills")
+          for dir in "${required_dirs[@]}"; do
+            if [ ! -d "$dir" ]; then
+              echo "Error: Required directory $dir not found"
+              exit 1
+            fi
+          done
+          
+          # Count skills
+          skill_count=$(find .github/skills -name "SKILL.md" | wc -l)
+          
+          echo "Found $skill_count skills"
+          
+          if [ $skill_count -eq 0 ]; then
+            echo "Error: No skills found"
+            exit 1
+          fi
+          
+          # Check required files
+          required_files=("AGENTS.md" "skills-lock.json")
+          for file in "${required_files[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "Error: Required file $file not found"
+              exit 1
+            fi
+          done
+          
+          echo "✅ Structure validation passed"
+      
+      - name: Create package directories
+        run: |
+          mkdir -p release-full/.github
+          mkdir -p release-minimal/.github
+          mkdir -p checksums
+      
+      - name: Build full package
+        run: |
+          echo "Building full spec2cloud package..."
+          
+          # Copy skills (core framework)
+          cp -r .github/skills release-full/.github/skills
+          
+          # Copy copilot instructions
+          if [ -f ".github/copilot-instructions.md" ]; then
+            cp .github/copilot-instructions.md release-full/.github/
+          fi
+          
+          # Copy LSP config
+          if [ -f ".github/lsp.json" ]; then
+            cp .github/lsp.json release-full/.github/
+          fi
+          
+          # Copy .spec2cloud state management framework
+          if [ -d ".spec2cloud" ]; then
+            cp -r .spec2cloud release-full/.spec2cloud
+          fi
+          
+          # Copy AGENTS.md orchestrator
+          cp AGENTS.md release-full/
+          
+          # Copy MCP config
+          if [ -f ".mcp.json" ]; then
+            cp .mcp.json release-full/
+          fi
+          
+          # Copy skills-lock.json
+          cp skills-lock.json release-full/
+          
+          # Copy VS Code configuration
+          if [ -f ".vscode/mcp.json" ]; then
+            mkdir -p release-full/.vscode
+            cp .vscode/mcp.json release-full/.vscode/
+          fi
+          
+          # Copy devcontainer config
+          if [ -f ".devcontainer/devcontainer.json" ]; then
+            mkdir -p release-full/.devcontainer
+            cp .devcontainer/devcontainer.json release-full/.devcontainer/
+          fi
+          
+          # Create specs directory structure
+          mkdir -p release-full/specs/{features,tasks,docs,domain}
+          touch release-full/specs/.gitkeep
+          touch release-full/specs/features/.gitkeep
+          touch release-full/specs/tasks/.gitkeep
+          touch release-full/specs/docs/.gitkeep
+          touch release-full/specs/domain/.gitkeep
+          
+          # Copy documentation
+          cp templates/RELEASE_README.md release-full/README.md
+          cp LICENSE.md release-full/
+          
+          echo "✅ Full package built"
+      
+      - name: Build minimal package
+        run: |
+          echo "Building minimal spec2cloud package..."
+          
+          # Copy skills (core framework)
+          cp -r .github/skills release-minimal/.github/skills
+          
+          # Copy copilot instructions
+          if [ -f ".github/copilot-instructions.md" ]; then
+            cp .github/copilot-instructions.md release-minimal/.github/
+          fi
+          
+          # Include .spec2cloud framework
+          if [ -d ".spec2cloud" ]; then
+            cp -r .spec2cloud release-minimal/.spec2cloud
+          fi
+          
+          # Include AGENTS.md
+          cp AGENTS.md release-minimal/
+          
+          # Include skills-lock.json
+          cp skills-lock.json release-minimal/
+          
+          # Create specs directory structure
+          mkdir -p release-minimal/specs/{features,tasks,docs,domain}
+          touch release-minimal/specs/.gitkeep
+          
+          # Create minimal README
+          cat > release-minimal/README.md << 'EOF'
+          # Spec2Cloud - Minimal Installation
+          
+          This package contains the spec2cloud skills framework and orchestrator.
+          
+          ## Quick Install
+          
+          Copy the contents to your project root:
+          
+          ```bash
+          cp -r .github /path/to/your/project/
+          cp AGENTS.md /path/to/your/project/
+          cp skills-lock.json /path/to/your/project/
+          ```
+          
+          ## What's Included
+          
+          - `.github/skills/` — agentskills.io skills (core framework)
+          - `AGENTS.md` — Orchestrator instructions
+          - `skills-lock.json` — Skills version lock
+          - `.spec2cloud/` — State management
+          - `specs/` — Specifications directory structure
+          
+          ## Usage
+          
+          Open your project in VS Code with GitHub Copilot Chat and start a conversation.
+          The orchestrator (AGENTS.md) will guide you through the spec2cloud workflow.
+          
+          For full installation with dev container and MCP servers, use `npx spec2cloud init`.
+          
+          ## Learn More
+          
+          https://github.com/EmeaAppGbb/spec2cloud
+          EOF
+          
+          cp LICENSE.md release-minimal/
+          
+          echo "✅ Minimal package built"
+      
+      - name: Create ZIP archives
+        run: |
+          cd release-full
+          zip -r ../spec2cloud-full-${{ steps.version.outputs.VERSION }}.zip .
+          cd ..
+          
+          cd release-minimal
+          zip -r ../spec2cloud-minimal-${{ steps.version.outputs.VERSION }}.zip .
+          cd ..
+          
+          echo "✅ ZIP archives created"
+      
+      - name: Generate checksums
+        run: |
+          sha256sum spec2cloud-full-${{ steps.version.outputs.VERSION }}.zip > checksums/spec2cloud-full-${{ steps.version.outputs.VERSION }}.sha256
+          sha256sum spec2cloud-minimal-${{ steps.version.outputs.VERSION }}.zip > checksums/spec2cloud-minimal-${{ steps.version.outputs.VERSION }}.sha256
+          
+          # Create combined checksums file
+          cat checksums/*.sha256 > CHECKSUMS.txt
+          
+          echo "✅ Checksums generated"
+          cat CHECKSUMS.txt
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.VERSION }}
+          name: Spec2Cloud ${{ steps.version.outputs.VERSION }}
+          body: |
+            ## 🚀 Spec2Cloud Release ${{ steps.version.outputs.VERSION }}
+            
+            Transform any project into a spec2cloud-enabled development environment with AI-powered workflows.
+            
+            ### 📦 Installation Options
+            
+            **npx (Recommended)**
+            ```bash
+            npx spec2cloud init
+            ```
+            
+            **Full Package** (ZIP)
+            Includes skills, devcontainer, MCP config, and state management:
+            ```bash
+            curl -L https://github.com/EmeaAppGbb/spec2cloud/releases/download/${{ steps.version.outputs.VERSION }}/spec2cloud-full-${{ steps.version.outputs.VERSION }}.zip -o spec2cloud.zip
+            unzip spec2cloud.zip -d my-project
+            ```
+            
+            **Minimal Package** (ZIP)
+            Includes only skills, AGENTS.md, and state management:
+            ```bash
+            curl -L https://github.com/EmeaAppGbb/spec2cloud/releases/download/${{ steps.version.outputs.VERSION }}/spec2cloud-minimal-${{ steps.version.outputs.VERSION }}.zip -o spec2cloud-minimal.zip
+            unzip spec2cloud-minimal.zip -d my-project
+            ```
+            
+            ### 📋 What's Included
+            
+            **Full Package**:
+            - ✅ agentskills.io skills (core framework)
+            - ✅ Orchestrator (AGENTS.md)
+            - ✅ MCP server configuration
+            - ✅ Dev container setup
+            - ✅ State management (.spec2cloud/)
+            - ✅ Specs directory structure
+            
+            **Minimal Package**:
+            - ✅ agentskills.io skills
+            - ✅ Orchestrator (AGENTS.md)
+            - ✅ State management (.spec2cloud/)
+            
+            ### 🔐 Verification
+            
+            Verify package integrity using SHA256 checksums:
+            ```bash
+            sha256sum -c CHECKSUMS.txt
+            ```
+            
+            ### 📖 Documentation
+            
+            - [Integration Guide](https://github.com/EmeaAppGbb/spec2cloud/blob/vNext/INTEGRATION.md)
+            - [Full Documentation](https://github.com/EmeaAppGbb/spec2cloud)
+          files: |
+            spec2cloud-full-${{ steps.version.outputs.VERSION }}.zip
+            spec2cloud-minimal-${{ steps.version.outputs.VERSION }}.zip
+            CHECKSUMS.txt
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Update latest tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f latest
+          git push -f origin latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
